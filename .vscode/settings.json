@@ -66,6 +66,7 @@
         "string": "cpp",
         "thread": "cpp",
         "xlocbuf": "cpp",
-        "xlocmes": "cpp"
+        "xlocmes": "cpp",
+        "fstream": "cpp"
     }
 }
