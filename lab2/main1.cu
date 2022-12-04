@@ -21,9 +21,6 @@ uint toMultiple(uint a, uint b);
 void parallelMatrixMul(const base_type *a, const base_type *b, base_type *res, uint aRows, uint aCols, uint bCols);
 __global__ void parallelMatrixMulKernel(const base_type *a, const base_type *b, base_type *res, uint aCols, uint bCols);
 
-void parallelMatrixMulShared(const base_type *a, const base_type *b, base_type *res, uint aRows, uint aCols, uint bCols);
-__global__ void parallelMatrixMulSharedKernel(const base_type *a, const base_type *b, base_type *res, uint aCols, uint bCols);
-
 int main() {
     uint oldARows = 1024;
     uint oldACols = 423;
@@ -74,23 +71,6 @@ int main() {
     float kernelTime;
     cudaEventElapsedTime(&kernelTime, startEvent, stopEvent);
 
-    base_type *hCShared = new base_type[aRows * bCols];
-
-    base_type *dCShared = nullptr;
-    cudaMalloc((void**)&dCShared, cSize);
-
-    cudaEventRecord(startEvent, 0);
-
-    parallelMatrixMulShared(dA, dB, dCShared, aRows, aCols, bCols);
-
-    cudaEventRecord(stopEvent, 0);
-    cudaEventSynchronize(stopEvent);
-
-    cudaMemcpy(hCShared, dCShared, cSize, cudaMemcpyDeviceToHost);
-
-    float kernelTimeShared;
-    cudaEventElapsedTime(&kernelTimeShared, startEvent, stopEvent);
-
     // write results
 
     bool isEqual = true;
@@ -101,7 +81,7 @@ int main() {
                 sum += hA[i * aCols + k] * hB[k * bCols + j];
             }
 
-            if (fabs(sum - hC[i * bCols + j]) > 1e-5 || fabs(sum - hCShared[i * bCols + j]) > 1e-5) {
+            if (fabs(sum - hC[i * bCols + j]) > 1e-5) {
                 isEqual = false;
                 break;
             }
@@ -115,7 +95,6 @@ int main() {
     }
 
     std::cout << std::setprecision(4) << "Time spent executing by the GPU: " << kernelTime << " milliseconds" << std::endl;
-    std::cout << std::setprecision(4) << "Time spent executing by the GPU (shared): " << kernelTimeShared << " milliseconds" << std::endl;
 
     // destroy
 
@@ -125,12 +104,10 @@ int main() {
     cudaFree(dA);
     cudaFree(dB);
     cudaFree(dC);
-    cudaFree(dCShared);
 
     delete[] hA;
     delete[] hB;
     delete[] hC;
-    delete[] hCShared;
 
     return 0;
 }
@@ -175,40 +152,5 @@ __global__ void parallelMatrixMulKernel(const base_type *a, const base_type *b, 
     }
 
     uint ind = bCols * yi + bi;
-    res[ind] = sum;
-}
-
-void parallelMatrixMulShared(const base_type *a, const base_type *b, base_type *res, uint aRows, uint aCols, uint bCols) {
-    dim3 threadsPerBlock = dim3(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 blocksPerGrid = dim3(bCols / BLOCK_SIZE, aRows / BLOCK_SIZE);
-    parallelMatrixMulSharedKernel<<<blocksPerGrid, threadsPerBlock>>>(a, b, res, aCols, bCols);
-}
-
-__global__ void parallelMatrixMulSharedKernel(const base_type *a, const base_type *b, base_type *res, uint aCols, uint bCols) {
-    uint aBegin = aCols * blockDim.y * blockIdx.y;
-    uint aEnd = aBegin + aCols - 1;
-    uint aStep = blockDim.x;
-
-    uint bBegin = blockDim.x * blockIdx.x;
-    uint bStep = blockDim.y * bCols;
-
-    __shared__ base_type as[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ base_type bs[BLOCK_SIZE][BLOCK_SIZE];
-
-    base_type sum = 0.0;
-    for (uint ia = aBegin, ib = bBegin; ia < aEnd; ia += aStep, ib += bStep) {
-        as[threadIdx.y][threadIdx.x] = a[ia + aCols * threadIdx.y + threadIdx.x];
-        bs[threadIdx.y][threadIdx.x] = b[ib + bCols * threadIdx.y + threadIdx.x];
-
-        __syncthreads();
-
-        for (uint k = 0; k < blockDim.x; k++) {
-            sum += as[threadIdx.y][k] * bs[k][threadIdx.x];
-        }
-
-        __syncthreads();
-    }
-
-    uint ind = bCols * (blockDim.y * blockIdx.y + threadIdx.y) + blockDim.x * blockIdx.x + threadIdx.x;
     res[ind] = sum;
 }
