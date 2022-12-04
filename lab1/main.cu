@@ -6,185 +6,240 @@
 #include <iomanip>
 #include <fstream>
 
-constexpr int N = 4096;
-constexpr size_t VECTOR_SIZE = N * sizeof(double);
-constexpr size_t MATRIX_SIZE = N * N * sizeof(double);
-constexpr size_t BLOCK_SIZE = 256;
+typedef double base_type;
+typedef unsigned int uint;
+
+constexpr uint N = 512;
+constexpr size_t VECTOR_SIZE = N * sizeof(base_type);
+constexpr size_t MATRIX_SIZE = N * N * sizeof(base_type);
+constexpr uint BLOCK_SIZE = 16;
 
 std::random_device rd;
 std::default_random_engine eng(rd());
-std::uniform_real_distribution<double> distr(0, 100);
+std::uniform_real_distribution<base_type> distr(0, 100);
 
-void initVector(double *arr);
-void initMatrix(double *arr);
-void showVector(const double *arr);
-void showMatrix(const double *arr);
+void initVector(base_type* arr);
+void initMatrix(base_type* arr);
+
 bool checkIfVectorsEqual(const double* a, const double *b);
-bool checkIfMatrcesEqual(const double* a, const double *b);
-void mult(const double* a, const double*b, double* res);
-void parallelMult(const double* a, const double*b, double* res);
-__global__ void parallelMultKernel(const double* a, const double*b, double* res);
+
+void scalarMult(const base_type* a, const base_type* b, base_type* res);
+void parallelScalarMult(const base_type* a, const base_type* b, base_type* res);
+__global__ void parallelScalarMultKernel(const base_type* a, const base_type* b, base_type* res);
+
+void vectorOnMatrixMul(const base_type *a, const base_type *b, base_type *res);
+void parallelVectorOnMatrixMul(const base_type* a, const base_type* b, base_type* res);
+__global__ void parallelVectorOnMatrixMulKernel(const base_type* a, const base_type* b, base_type* res);
 
 int main() {
     // 1
 
-    double *a = new double[N];
-    double *b = new double[N];
-    double *c = new double[N * N];
+    base_type* a = new base_type[N];
+    base_type* b = new base_type[N];
+    base_type* c = new base_type[N * N];
 
     initVector(a);
     initVector(b);
+    initMatrix(c);
 
     // 2
 
-    double *ab_mult_res = new double[N];
+    base_type* abScalarMultRes = new base_type[N];
 
-    using std::chrono::high_resolution_clock;
-    using std::chrono::duration_cast;
-    using std::chrono::duration;
-    using std::chrono::milliseconds;
+    auto t1 = std::chrono::high_resolution_clock::now();
 
-    auto t1 = high_resolution_clock::now();
+    scalarMult(a, b, abScalarMultRes);
 
-    mult(a, b, ab_mult_res);
+    auto t2 = std::chrono::high_resolution_clock::now();
 
-    auto t2 = high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> msDouble = t2 - t1;
+    double scalarMultElapsedTime = msDouble.count();
 
-    duration<double, std::milli> ms_double = t2 - t1;
-    double elapsedTime = ms_double.count();
+    base_type* abParellelScalarMultRes = new double[N];
+    base_type* dA, *dB, *dAbParellelScalarMultRes;
 
-    double *ab_parellel_mult_res = new double[N];
-    double *d_a, *d_b, *d_ab_parellel_mult_res;
+    cudaMalloc((void**)&dA, VECTOR_SIZE);
+    cudaMalloc((void**)&dB, VECTOR_SIZE);
+    cudaMalloc((void**)&dAbParellelScalarMultRes, VECTOR_SIZE);
 
-    cudaMalloc((void**)&d_a, VECTOR_SIZE);
-    cudaMalloc((void**)&d_b, VECTOR_SIZE);
-    cudaMalloc((void**)&d_ab_parellel_mult_res, VECTOR_SIZE);
-
-    cudaMemcpy(d_a, a, VECTOR_SIZE, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, b, VECTOR_SIZE, cudaMemcpyHostToDevice);
+    cudaMemcpy(dA, a, VECTOR_SIZE, cudaMemcpyHostToDevice);
+    cudaMemcpy(dB, b, VECTOR_SIZE, cudaMemcpyHostToDevice);
 
     cudaEvent_t startEvent, stopEvent;
-    float parallel_elapsed_time;
+    float parallelScalarMultElapsedTime;
 
     cudaEventCreate(&startEvent);
     cudaEventCreate(&stopEvent);
 
     cudaEventRecord(startEvent, 0);
 
-    parallelMult(d_a, d_b, d_ab_parellel_mult_res);
+    parallelScalarMult(dA, dB, dAbParellelScalarMultRes);
 
     cudaEventRecord(stopEvent, 0);
 
     cudaEventSynchronize(stopEvent);
-    cudaEventElapsedTime(&parallel_elapsed_time, startEvent, stopEvent);
+    cudaEventElapsedTime(&parallelScalarMultElapsedTime, startEvent, stopEvent);
 
-    cudaMemcpy(ab_parellel_mult_res, d_ab_parellel_mult_res, VECTOR_SIZE, cudaMemcpyDeviceToHost);
+    cudaMemcpy(abParellelScalarMultRes, dAbParellelScalarMultRes, VECTOR_SIZE, cudaMemcpyDeviceToHost);
 
-    cudaEventDestroy(startEvent);
-    cudaEventDestroy(stopEvent);
+    // 3
+    base_type* abVectorOnMatrixMultRes = new base_type[N];
+
+    t1 = std::chrono::high_resolution_clock::now();
+
+    vectorOnMatrixMul(a, c, abVectorOnMatrixMultRes);
+
+    t2 = std::chrono::high_resolution_clock::now();
+
+    msDouble = t2 - t1;
+    double vectorOnMatrixElapsedTime = msDouble.count();
+
+    base_type* abParellelVectorOnMatrixMultRes = new double[N];
+    base_type* dC, *dAbParellelVectorOnMatrixMultRes;
+
+    cudaMalloc((void**)&dC, MATRIX_SIZE);
+    cudaMalloc((void**)&dAbParellelVectorOnMatrixMultRes, VECTOR_SIZE);
+
+    cudaMemcpy(dC, c, MATRIX_SIZE, cudaMemcpyHostToDevice);
+
+    float parallelVectorOnMatrixElapsedTime;
+
+    cudaEventRecord(startEvent, 0);
+
+    parallelVectorOnMatrixMul(dA, dC, dAbParellelVectorOnMatrixMultRes);
+
+    cudaEventRecord(stopEvent, 0);
+
+    cudaEventSynchronize(stopEvent);
+    cudaEventElapsedTime(&parallelVectorOnMatrixElapsedTime, startEvent, stopEvent);
+
+    cudaMemcpy(abParellelVectorOnMatrixMultRes, dAbParellelVectorOnMatrixMultRes, VECTOR_SIZE, cudaMemcpyDeviceToHost);
 
     // write results
 
     std::ofstream out("output.txt");
 
-    if (checkIfVectorsEqual(ab_mult_res, ab_parellel_mult_res)) {
-        out << "Vectors are equal!" << std::endl;
+    if ((abScalarMultRes - abParellelScalarMultRes) < 1e-5) {
+        out << "The scalar product is calculated correctly!" << std::endl;
     } else {
-        out << "Vectors are not equal!" << std::endl;
+        out << "The scalar product is calculated incorrectly!" << std::endl;
     }
 
-    out << std::setprecision(4) << "Time spent executing by the CPU: " << elapsedTime << " milliseconds" << std::endl;
-    out << std::setprecision(4) << "Time spent executing by the GPU: " << parallel_elapsed_time << " milliseconds" << std::endl;
+    out << std::setprecision(4) << "Scalar product: Time spent executing by the CPU: " << scalarMultElapsedTime << " milliseconds" << std::endl;
+    out << std::setprecision(4) << "Scalar product: Time spent executing by the GPU: " << parallelScalarMultElapsedTime << " milliseconds" << std::endl;
+
+    out << std::endl;
+
+    if (checkIfVectorsEqual(abVectorOnMatrixMultRes, abParellelVectorOnMatrixMultRes)) {
+        out << "The vector on matrix mult is calculated correctly!" << std::endl;
+    } else {
+        out << "The vector on matrix mult is calculated incorrectly!" << std::endl;
+    }
+
+    out << std::setprecision(4) << "Vector on Matrix mult: Time spent executing by the CPU: " << vectorOnMatrixElapsedTime << " milliseconds" << std::endl;
+    out << std::setprecision(4) << "Vector on Matrix mult: Time spent executing by the GPU: " << parallelVectorOnMatrixElapsedTime << " milliseconds" << std::endl;
 
     out.close();
 
-    // deallocate memory
+    // destroy
 
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_ab_parellel_mult_res);
+    cudaEventDestroy(startEvent);
+    cudaEventDestroy(stopEvent);
+
+    cudaFree(dA);
+    cudaFree(dB);
+    cudaFree(dAbParellelScalarMultRes);
 
     delete[] a;
     delete[] b;
     delete[] c;
 
-    delete[] ab_mult_res;
-    delete[] ab_parellel_mult_res;
+    delete[] abScalarMultRes;
+    delete[] abParellelScalarMultRes;
 
     return 0;
 }
 
-void initVector(double *arr) {
-    for (size_t i = 0; i < N; i++) {
+void initVector(base_type* arr) {
+    for (uint i = 0; i < N; i++) {
         arr[i] = distr(eng);
     }
 }
 
-void initMatrix(double *arr) {
-    for (size_t i = 0; i < N; i++) {
-        for (size_t j = 0; j < N; j++) {
+void initMatrix(base_type* arr) {
+    for (uint i = 0; i < N; i++) {
+        for (uint j = 0; j < N; j++) {
             arr[j * N + i] = distr(eng);
         }
     }
 }
 
-void mult(const double* a, const double*b, double* res) {
-    for (size_t i = 0; i < N; i++) {
-        res[i] = a[i] * b[i];
+void scalarMult(const base_type* a, const base_type* b, base_type* res) {
+    base_type sum = 0;
+    for (uint i = 0; i < N; i++) {
+        sum += a[i] * b[i];
+    }
+
+    *res = sum;
+}
+
+void parallelScalarMult(const base_type* a, const base_type* b, base_type* res) {
+    parallelScalarMultKernel<<<1, N>>>(a, b, res);
+}
+
+__global__ void parallelScalarMultKernel(const base_type* a, const base_type* b, base_type* res) {
+    __shared__ base_type temp[N];
+    temp[threadIdx.x] = a[threadIdx.x] * b[threadIdx.x];
+
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        base_type sum = 0.0;
+        for (int i = 0; i < blockDim.x; i++) {
+            sum += temp[i];
+        }
+
+        *res = sum;
     }
 }
 
-void parallelMult(const double* a, const double*b, double* res) {
-    int num_blocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    parallelMultKernel<<<num_blocks, BLOCK_SIZE>>>(a, b, res);
+void vectorOnMatrixMul(const base_type *a, const base_type *b, base_type *res) {
+    base_type sum = 0.0;
+
+    for (int i = 0; i < N; i++) {
+        sum = 0.0;
+        for (int j = 0; j < N; j++) {
+            sum += a[j] * b[j * N + i];
+        }
+
+        res[i] = sum;
+    }
 }
 
-__global__ void parallelMultKernel(const double* a, const double*b, double* res) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid > N - 1) {
-        return;
+void parallelVectorOnMatrixMul(const base_type* a, const base_type* b, base_type* res) {
+    dim3 threadsPerBlock = dim3(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 blocksPerGrid = dim3(N / BLOCK_SIZE);
+    parallelVectorOnMatrixMulKernel<<<blocksPerGrid, threadsPerBlock>>>(a, b, res);
+}
+
+__global__ void parallelVectorOnMatrixMulKernel(const base_type* a, const base_type* b, base_type* res) {
+    uint j0 = blockDim.x * blockIdx.x + threadIdx.x;
+    base_type sum = 0;
+
+    for (uint k = 0; k < N; k++) {
+        sum += a[k] * b[k * N + j0];
     }
 
-    res[tid] = a[tid] * b[tid];
+    uint ind = blockDim.x * blockIdx.x + threadIdx.x;
+    res[ind] = sum;
 }
 
 bool checkIfVectorsEqual(const double* a, const double *b) {
-    for (size_t i = 0; i < N; i++) {
-        if (a[i] != b[i]) {
+    for (int i = 0; i < N; i++) {
+        if ((a[i] - b[i]) > 1e-5) {
             return false;
         }
     }
 
     return true;
-}
-
-bool checkIfMatrcesEqual(const double* a, const double *b) {
-    for (size_t i = 0; i < N; i++) {
-        for (size_t j = 0; j < N; j++) {
-            if (a[j * N + i] != b[j * N + i]) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-
-void showVector(const double *arr) {
-    for (size_t i = 0; i < N; i++) {
-        std::cout << std::fixed << std::setprecision(4) << std::setw(9) << arr[i];
-    }
-    std::cout << std::endl;
-}
-
-void showMatrix(const double *arr) {
-    for (size_t i = 0; i < N; i++) {
-        for (size_t j = 0; j < N; j++) {
-            std::cout << std::fixed << std::setprecision(4) << std::setw(9) << arr[j * N + i];
-        }
-
-        std::cout << std::endl;
-    }
-    std::cout << std::endl;
 }
