@@ -8,8 +8,7 @@
 
 typedef float2 Complex;
 #define N_ELEM 10
-int
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
     Complex *h_signal;
     Complex *d_signal;

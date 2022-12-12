@@ -10,7 +10,8 @@
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}",
-                "-lcufft"
+                "-lcufft",
+                "-lcublas",
             ],
             "group": {
                 "kind": "build",
